@@ -20,7 +20,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 app = Flask(__name__)
 
 cred = credentials.Certificate(
-    'aplicai-firebase-adminsdk-585py-ae2bcf39b0.json')
+    'aplicai-firebase-adminsdk-585py-b252b67ff6.json')
 firebase_admin.initialize_app(cred, {'projectId': 'aplicai'})
 db = firestore.client()
 
