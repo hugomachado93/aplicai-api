@@ -16,6 +16,8 @@ import gensim.downloader as api
 from gensim.models import KeyedVectors
 from gensim.test.utils import common_texts
 from sklearn.metrics.pairwise import cosine_similarity
+from gensim.similarities import WmdSimilarity
+from itertools import chain
 
 app = Flask(__name__)
 
@@ -29,34 +31,10 @@ def myconverter(o):
     if isinstance(o, datetime.datetime):
         return o.__str__()
 
-
-def average_word2vec(skills_list, model):
-    word_embeddings = []
-    for skills in skills_list:
-        result = average_word2vec_user_skills(skills, model, word_embeddings)
-    return result
-
-
-def average_word2vec_user_skills(skills, model, word_embeddings):
-    avgword2vec = None
-    count = 0
-    for skill in skills:
-        if skill in model.wv.key_to_index:
-            count += 1
-            if avgword2vec is None:
-                avgword2vec = model.wv[skill]
-            else:
-                avgword2vec = avgword2vec + model.wv[skill]
-
-        if avgword2vec is not None:
-            avgword2vec = avgword2vec / count
-            word_embeddings.append(avgword2vec)
-    return word_embeddings
-
 # Carrega o ultimo modelo para dar continuidade ao treinamento
 @app.route("/training", methods=['GET'])
 def trainning():
-    model=Word2Vec.load('skills2vec.model')
+    model=Word2Vec.load('notebooks/skills2vec.model')
     snapshots=list(db.collection_group(u'Demands').stream())
     demand_list=[]
     categories_list=[]
@@ -68,66 +46,75 @@ def trainning():
         categories_list.append(snapshot_to_dict['categories'])
 
     model.train(categories_list, total_examples=len(categories_list), epochs=model.epochs)
-    model.save('skills2vec.model')
+    model.save('notebooks/skills2vec.model')
 
     return app.response_class(status=204, mimetype='application/json')
 
-@app.route("/recomendation/<user_id>", methods=['GET'])
-def recomend(user_id):
+@app.route("/async-recommendation", methods=['GET'])
+def recomendv2():
     #carrega o ulimo modelo salvo
-    model=Word2Vec.load('skills2vec.model')
+    model=Word2Vec.load('notebooks/skills2vec.model')
     
     #query params
     ndemands = request.args.get('ndemands', default=100, type=int)
 
     #query firestore
     snapshots=list(db.collection_group(u'DemandList').stream())
-    user_demands_skills=list(db.collection(u'Users').document(user_id).collection(u'Demands').stream())
-    user_skills=db.collection(u'Users').document(user_id).get().to_dict()['categories']
 
-    #inicio algoritmo para pegar a n melhores demandas para o usuário
+    #inicio algoritmo para pegar a n melhores demandas para cada usuário
     demand_list = []
     category_list = []
 
+    #pega todas as demandas
     for snapshot in snapshots:
         snapshot_to_dict=snapshot.to_dict()
-        snapshot_to_dict.update({'demand_id': snapshot.id})
+        snapshot_to_dict.update({'demand_id': snapshot.id, 'user_owner_id': str(snapshot.reference.parent.parent.id)})
         demand_list.append(snapshot_to_dict)
-        category_list.append(snapshot_to_dict['categories'])
+        category_list.append([skill.lower() for skill in snapshot_to_dict['categories']])
 
-    average_list=average_word2vec(category_list, model)
+    #Pega as skills para cada usuario
+    snapshots = list(db.collection(u'Users').where(u'isFinished', u'==', True).where(u'type', u'==', 'student').stream())
+    user_list = []
+    user_skills_list = []
+    for snapshot in snapshots:
+        snapshot_to_dict = snapshot.to_dict()
+        snapshot_to_dict.update({'user_id': snapshot.id})
+        user_list.append(snapshot_to_dict)
+        user_skills_list.append([skill.lower() for skill in snapshot_to_dict['categories']])
 
-    for snapshot in user_demands_skills:
-        snapshot_to_dict=snapshot.to_dict()
-        snapshot_to_dict.update({'demand_id': snapshot.id})
-        user_skills = user_skills + snapshot_to_dict['categories']
+    user_demand_list = []
+    user_demands_skills_list = []
+    for user in user_list:
+        snapshots = list(db.collection(u'Users').document(user['user_id']).collection(u'Demands').stream())
+        demand_temp_list = []
+        skills_list = []
+        for snapshot in snapshots:
+            snapshot_to_dict = snapshot.to_dict()
+            snapshot_to_dict.update({'demand_id': snapshot.id})
+            demand_temp_list.append(snapshot_to_dict)
+            skills_list.append([skill.lower() for skill in snapshot_to_dict['categories']])
+        user_demand_list.append(demand_temp_list)
+        user_demands_skills_list.append(list(chain.from_iterable(skills_list)))
 
-    average_user = average_word2vec_user_skills(user_skills, model, [])
-
-    result=cosine_similarity(average_user, average_list)
+    user_joined_perfil_demand_skills = []
+    for index in range(len(user_skills_list)):
+        user_joined_perfil_demand_skills.append(list(set(user_skills_list[index] + user_demands_skills_list[index])))
     
-    similarities = []
 
-    for index, demand in enumerate(demand_list):
-        similarities.append([demand['demand_id'], result[0][index]])
+    demands_sim_list = []
+    for index, user_skills in enumerate(user_joined_perfil_demand_skills):
+        instance = WmdSimilarity(category_list, model.wv, num_best=100)
+        sims = instance[user_skills]
+        demands_sim_list.append(sims)
 
-    sorted_similarities = sorted(similarities, key= lambda x: x[1], reverse=True)
+    for index, demand_sim in enumerate(demands_sim_list):
+        recomend_list = []
+        for sim in demand_sim:
+            recomend_list.append({'demand_id': demand_list[sim[0]]['demand_id'], 'user_owner_id': demand_list[sim[0]]['user_owner_id'], 'similarity': sim[1]})
+        recomend_dict = {'recomended_demand': recomend_list}
+        db.collection('Recomendation').document(user_list[index]['user_id']).set(recomend_dict)
 
-    ranked_demand_list = sorted_similarities[:ndemands]
-
-    ranked_demands_id = [demand[0] for demand in ranked_demand_list]
-
-    filtered_ranked_demands = []
-
-    for demand_id in ranked_demands_id:
-        for demand in demand_list:
-            if demand_id == demand['demand_id']:
-                filtered_ranked_demands.append(demand)
-
-    if not user_skills:
-        return app.response_class(status=204, mimetype='application/json')
-
-    return json.dumps(filtered_ranked_demands, default=myconverter), 200
+    return app.response_class(status=204, mimetype='application/json')
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0')
