@@ -2,11 +2,12 @@ from flask import Flask
 from flask import request
 import datetime
 import json
-# firebase
 import pandas as pd
+# firebase
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
+from firebase_admin import storage
 # gensim
 import numpy as np
 import random
@@ -23,18 +24,20 @@ app = Flask(__name__)
 
 cred = credentials.Certificate(
     'aplicai-firebase-adminsdk-585py-b252b67ff6.json')
-firebase_admin.initialize_app(cred, {'projectId': 'aplicai'})
+firebase_admin.initialize_app(cred, {'projectId': 'aplicai', 'storageBucket': 'aplicai.appspot.com'})
 db = firestore.client()
-
 
 def myconverter(o):
     if isinstance(o, datetime.datetime):
         return o.__str__()
 
 # Carrega o ultimo modelo para dar continuidade ao treinamento
-@app.route("/training", methods=['GET'])
+@app.route("/trainning", methods=['GET'])
 def trainning():
-    model=Word2Vec.load('notebooks/skills2vec.model')
+    blob_download = storage.bucket().blob('word2vec_model/skills2vec.model')
+    blob_download.download_to_filename('skills2vec.model')
+    blob_upload = storage.bucket().blob('word2vec_model/skills2vec.model')
+    model=Word2Vec.load('skills2vec.model')
     snapshots=list(db.collection_group(u'Demands').stream())
     demand_list=[]
     categories_list=[]
@@ -46,14 +49,15 @@ def trainning():
         categories_list.append(snapshot_to_dict['categories'])
 
     model.train(categories_list, total_examples=len(categories_list), epochs=model.epochs)
-    model.save('notebooks/skills2vec.model')
+    model.save('skills2vec.model')
+    blob_upload.upload_from_filename('skills2vec.model')
 
     return app.response_class(status=204, mimetype='application/json')
 
-@app.route("/async-recommendation", methods=['GET'])
+@app.route("/offline-recommendation", methods=['GET'])    
 def recomendv2():
     #carrega o ulimo modelo salvo
-    model=Word2Vec.load('notebooks/skills2vec.model')
+    model=Word2Vec.load('skills2vec.model')
     
     #query params
     ndemands = request.args.get('ndemands', default=100, type=int)
@@ -99,11 +103,11 @@ def recomendv2():
     user_joined_perfil_demand_skills = []
     for index in range(len(user_skills_list)):
         user_joined_perfil_demand_skills.append(list(set(user_skills_list[index] + user_demands_skills_list[index])))
-    
+    ndemands
 
     demands_sim_list = []
     for index, user_skills in enumerate(user_joined_perfil_demand_skills):
-        instance = WmdSimilarity(category_list, model.wv, num_best=100)
+        instance = WmdSimilarity(category_list, model.wv, num_best=ndemands)
         sims = instance[user_skills]
         demands_sim_list.append(sims)
 
