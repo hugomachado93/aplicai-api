@@ -1,13 +1,12 @@
 const functions = require("firebase-functions");
 
-// The Firebase Admin SDK to access Firestore.
 const admin = require('firebase-admin');
 admin.initializeApp();
 
 const db = admin.firestore();
 
-exports.notificationHandler = functions.firestore
-    .document('Recomendation/{userId}')
+exports.notificationOnUpdate = functions.firestore
+    .document('Recommendation/{userId}')
     .onUpdate(async (change, context) => {
 
         const data = change.after.data();
@@ -23,18 +22,27 @@ exports.notificationHandler = functions.firestore
                 }
             });
             if (newDemandData !== null) {
-                newDemands.push({'demandId': newDemandData.demand_id, 'user_owner_id': newDemandData.user_owner_id});
+                newDemands.push({ 'demandId': newDemandData.demand_id, 'user_owner_id': newDemandData.user_owner_id });
             }
         });
-
-        const newRecomendations = data.recomended_demand.length - unchangedDemands;
 
         if (newDemands.length > 0) {
             await db.collection('Users').doc(change.after.id).collection('Notifications').doc().set({
                 'name': 'Notificação de demandas recomendadas',
-                'notification': `Voce tem ${newRecomendations} novas recomendações`,
+                'notification': newDemands.length > 1 ? `Voce tem ${newDemands.length} novas recomendações`: `Voce tem ${newDemands.length} nova recomendação`,
                 'demands': newDemands,
-                'type': 'recomendation'
+                'type': 'recommendation'
             });
         }
+    });
+
+    exports.notificationOnCreate = functions.firestore
+    .document('Recommendation/{userId}')
+    .onCreate(async (snap, context) => {
+
+        await db.collection('Users').doc(snap.id).collection('Notifications').doc().set({
+            'name': 'Notificação de demandas recomendadas',
+            'notification': `Voce já possui demandas recomendadas. Vá até explorar para obter algumas dicas`,
+            'type': 'first_recommendation'
+        });
     });

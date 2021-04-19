@@ -63,7 +63,7 @@ def recomendv2():
     ndemands = request.args.get('ndemands', default=100, type=int)
 
     #query firestore
-    snapshots=list(db.collection_group(u'DemandList').stream())
+    snapshots=list(db.collection_group(u'DemandList').where(u'isFinished', u'==', False).stream())
 
     #inicio algoritmo para pegar a n melhores demandas para cada usuário
     demand_list = []
@@ -114,9 +114,9 @@ def recomendv2():
     for index, demand_sim in enumerate(demands_sim_list):
         recomend_list = []
         for sim in demand_sim:
-            recomend_list.append({'demand_id': demand_list[sim[0]]['demand_id'], 'user_owner_id': demand_list[sim[0]]['user_owner_id'], 'similarity': sim[1]})
+            recomend_list.append({'demand_id': demand_list[sim[0]]['demand_id'], 'user_owner_id': demand_list[sim[0]]['user_owner_id'], 'similarity': float(sim[1])})
         recomend_dict = {'recomended_demand': recomend_list}
-        db.collection('Recomendation').document(user_list[index]['user_id']).set(recomend_dict)
+        db.collection('Recommendation').document(user_list[index]['user_id']).set(recomend_dict)
 
     return app.response_class(status=204, mimetype='application/json')
 
