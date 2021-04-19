@@ -54,7 +54,7 @@ def trainning():
 
     return app.response_class(status=204, mimetype='application/json')
 
-@app.route("/offline-recommendation", methods=['GET'])    
+@app.route("/async-recommendation", methods=['GET'])    
 def recomendv2():
     #carrega o ulimo modelo salvo
     model=Word2Vec.load('skills2vec.model')
