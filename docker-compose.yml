@@ -1,0 +1,7 @@
+version: "3"
+services:
+  aplicai-api:
+    build: .
+    container_name: aplicai-api
+    ports:
+      - "5000:5000"
